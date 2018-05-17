@@ -1,0 +1,198 @@
+---
+title: "NoteBook EXAMEN PARCIAL"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(survey)
+library(sae)
+library(TeachingSampling)
+library(dplyr)
+library(kableExtra)
+library(knitr)
+library(GGally)
+library(survey)
+library(TeachingSampling)
+library(dplyr)
+library(readxl)
+library(ggplot2)
+library(rgeos)
+library(sp)
+library(maptools)
+library(car)
+library(geoR)
+library(gstat)
+library(gdata)
+library(readxl)
+library(dplyr)
+library(nnet)
+library(autoencoder)
+library(devtools)
+source_url('https://gist.githubusercontent.com/fawda123/7471137/raw/466c1474d0a505ff044412703516c34f1a4684a5/nnet_plot_update.r')
+
+options(scipen = 999)
+options(survey.lonely.psu="adjust")
+```
+
+##### Realizado por:
+
+- **Nestor Jardany Serrano Rojas**, [GitHub](https://github.com/jardanys/)
+- **Camilo Alejandro Aguilar Laverde**, [GitHub](https://github.com/CamiloAguilar/)
+
+<br/>
+
+# 1. Neuronal Network MNIST
+
+<div class=text-justify>
+A continuación se entrena un modelo por medio de maquinas de aprendizaje (redes neuronales), para la base de datos de MNIST, los números seleccionados para el modelo son **3** y **8**.
+</div>
+
+## 1.1. Selección de datos
+
+<div class=text-justify>
+A continuación se muestran los números seleccionados y se crea una base única para entrenamiento y pruebas.
+</div>
+
+```{r data, echo=TRUE}
+train_3 <- readRDS("./RDS/Train_3.rds")
+train_8 <- readRDS("./RDS/Train_8.rds")
+
+test_3 <- readRDS("./RDS/Test_3.rds")
+test_8 <- readRDS("./RDS/Test_8.rds")
+
+train_3_8 <- rbind(train_3, train_8)
+test_3_8 <- rbind(test_3, test_8)
+```
+
+<br/>
+
+## 1.2. PCA aplicación bases de train y test
+
+<div class=text-justify>
+
+Con la base de entrenamiento se realiza un PCA y se muestra por componentes la varianza acumulada. Adicional con la función predict se crean las siguientes bases:
+
+- Y para train
+- Y para test
+- X las características de train
+- X las características de test
+
+</div>
+
+```{r f, echo=TRUE}
+
+pc <- prcomp(train_3_8[,c(1:784)])
+pc_test <- predict(pc, test_3_8[,c(1:784)])
+plot(cumsum(pc$sdev^2)/sum(pc$sdev^2), xlab = "Componentes", ylab = "Varianza Acumulada", main = "% Acum Varianza")
+abline(h=0.5, col="red")
+abline(h=0.8, col="blue")
+abline(h=0.9, col="green")
+abline(h=0.95, col="yellow")
+abline(h=0.99, col="pink")
+x <- pc$x
+x_test <- pc_test
+y <- as.numeric(as.character(train_3_8[,785]))
+y <- ifelse(y==3,1,0)
+y_test <- as.numeric(as.character(test_3_8[,785]))
+y_test <- ifelse(y_test==3,1,0)
+
+```
+
+
+<br/>
+
+## 1.3. Bucle para la red neuronal
+
+<div class=text-justify>
+Se crea un bucle teniendo en cuenta los siguientes parámetros:
+
+- Componentes entre 2 y 100.
+- Número de neuronas entre 1 y 10.
+
+De acuerdo a los modelos desarrollados se obtiene crea una base de datos con los resultados de los modelos de acuerdo a los parámetros.
+
+</div>
+
+```{r pressure, echo=TRUE}
+componentes <- c(2:100)
+neuronas <- c(1:10)
+z <- 0
+res <- data.frame(redes=0, componentes=1, neuronas=1, err=1)
+library(progress)
+pb <- progress_bar$new(total = 100)
+for(i in componentes){
+  for(j in neuronas){
+    x <- pc$x[,c(1:i)]
+    n_net <- nnet(y=y, x=x, size=j, trace=F, MaxNWts = 100000)
+    predict.nnet <- round(predict(n_net, x_test[, c(1:i)]))
+    error <- ifelse(predict.nnet==y_test, 0, 1)
+    resid <- sum(error) / length(error)
+    z <- z + 1
+    res <- rbind(res, c(z, i, j, resid))
+  }
+  pb$tick()
+}
+
+res <- res[-1,]
+res$err <- as.numeric(res$err)
+
+kable(res, "html") %>%
+  kable_styling("striped", full_width = F, position = "center") %>%
+  scroll_box(width = "850px", height = "300px")
+```
+
+<br/>
+
+## 1.4. Mejor red neuronal
+<div class=text-justify>
+Se define con el modelo de red neuronal, el modelo con menor error de prueba, como se muestra a continuación.
+</div>
+```{r w, echo=TRUE}
+res[which.min(res$err),]
+ggplot(res, aes(x=redes, y=err, colour="resid test")) + geom_line() +
+  ylab("Resid est") + labs(title = "Total Redes Neuronales", 
+                                    subtitle = "Resid Test")
+compo <- res[which.min(res$err),2]
+neu <- res[which.min(res$err),3]
+x <- pc$x[,c(1:compo)]
+n_net <- nnet(y=y, x=x, size=neu, trace=F, MaxNWts = 100000)
+plot.nnet(n_net)
+wts.in<-n_net$wts
+struct<-n_net$n
+plot.nnet(wts.in,struct=struct)
+```
+<br/>
+
+# 2. Autoencoder
+
+## 2.1. Mejor red neuronal
+<div class=text-justify>
+Por medio de la función de Autoencoder, para la base de perros y gatos se busca definir una reducción de dimensionalidad por medio del número de neuronas, aplicando más de una capa oculta. Así se realizan los siguientes pasos:
+
+- Expresa la función para gráficas los perros o los gatos.
+- Se generan 5 capas oculta, para un total de 7. COn 4 neuronas en la primera capa ocualta, 3 y 2 en las siguientes y luego se devuelven en número de neuronas.
+- Se genera la imagen de un gato real
+- Se genera la imagen del mismo gato con la función predict.autoencoder.
+
+Entre más capas ocultas y mejor procesamiento de maquina la predicción puede mejorar.
+
+</div>
+```{r w1, echo=TRUE}
+load("gatosperros.RData")
+
+plotcd <- function(v){
+  x <- matrix(v,64,64)
+  image(1:65,1:65,t(apply(x,2,rev)),asp=1,xaxt="n",yaxt="n",
+        col=grey((0:255)/255),ann=FALSE,bty="n")
+}
+
+auto_encode_9 <- autoencode(dm, unit.type = "logistic", N.hidden = c(4,3,2,3,4), nl = 7, 
+                          epsilon = 0.001, lambda = 0.0002, beta = 6, rho = 0.01)
+
+predicion_autoencode_9 <- predict.autoencoder(auto_encode_9, dm)
+
+plotcd(dm[3,])
+plotcd(predicion_autoencode_9$X.output[3,])
+```
+<br/>
